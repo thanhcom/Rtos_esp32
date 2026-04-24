@@ -2,7 +2,6 @@
 #define DHT_SENSOR_MODULE_H
 
 #include <Arduino.h>
-
 class DhtSensorModule {
 private:
     uint8_t _pin;

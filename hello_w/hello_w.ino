@@ -5,6 +5,7 @@
 #include "ConfigManager.h"
 #include "MqttModule.h" // Nhớ include module MQTT của bạn
 #include "WifiModule.h"
+#include "RfModule.h"
 
 // --- Khởi tạo đối tượng và biến toàn cục ---
 SensorModule mySensor;
@@ -13,10 +14,12 @@ CommModule myComm;
 ConfigManager myConfig;
 MqttModule myMqtt;
 WifiModule myWifi("KINH MAT HA NOI CS3", "Motnam6868");
+RfModule myRf;
 
 // Kho lưu trữ dữ liệu mới nhất để các Task dùng chung
 SystemState g_state = {0, 0, 0}; 
 QueueHandle_t sensorQueue;
+QueueHandle_t rfQueue;
 
 // --- Task 1: Gửi dữ liệu Voltage ---
 void TaskSensor(void *pvParameters) {
@@ -134,6 +137,53 @@ void TaskMQTT(void *pvParameters) {
         vTaskDelay(pdMS_TO_TICKS(100)); 
     }
 }
+// --- Task 6: RF Communication ---
+void TaskRF(void *pvParameters) {
+    myRf.begin();
+
+    for (;;) {
+        if (myRf.available()) {
+            String msg = myRf.receive();
+
+            RFData rfData;
+            memset(rfData.data, 0, sizeof(rfData.data));
+            msg.toCharArray(rfData.data, sizeof(rfData.data));
+
+            xQueueSend(rfQueue, &rfData, pdMS_TO_TICKS(10));
+
+            Serial.println("[RF] Received: " + msg);
+        }
+
+        vTaskDelay(pdMS_TO_TICKS(50));
+    }
+}
+// --- Task 7: Xử lý dữ liệu RF ---
+void TaskRFProcess(void *pvParameters) {
+    RFData rfData;
+
+    for (;;) {
+        if (xQueueReceive(rfQueue, &rfData, portMAX_DELAY)) {
+
+            String msg = String(rfData.data);
+
+            // 👇 xử lý tuỳ bạn
+            Serial.println("[RF_PROCESS] " + msg);
+
+            // ví dụ:
+            if (msg == "ON") {
+                digitalWrite(2, HIGH);
+            } else if (msg == "OFF") {
+                digitalWrite(2, LOW);
+            }
+
+            // hoặc parse dạng số
+            float val = atof(rfData.data);
+            if (val != 0) {
+                Serial.printf("[RF_VALUE] %.2f\n", val);
+            }
+        }
+    }
+}
 
 void setup() {
     // Khởi tạo Serial trước để debug
@@ -145,7 +195,7 @@ void setup() {
     myWifi.connect();
     myConfig.begin();
     sensorQueue = xQueueCreate(20, sizeof(SensorData));
-
+    rfQueue = xQueueCreate(10, sizeof(RFData));
     if (sensorQueue != NULL) {
         xTaskCreate(TaskSensor, "TaskVoltage", 3072, NULL, 1, NULL);
         xTaskCreate(TaskDHT,    "TaskDHT",     4096, NULL, 1, NULL); 
@@ -153,6 +203,8 @@ void setup() {
         xTaskCreate(TaskCLI,    "TaskCLI",     4096, NULL, 1, NULL);
         // MQTT cần Stack lớn vì chạy thư viện mạng phức tạp
         xTaskCreate(TaskMQTT,   "TaskMQTT",    8192, NULL, 1, NULL);
+        xTaskCreate(TaskRF,        "TaskRF",        4096, NULL, 1, NULL);
+        xTaskCreate(TaskRFProcess, "TaskRFProcess", 4096, NULL, 1, NULL);
     }
 }
 
